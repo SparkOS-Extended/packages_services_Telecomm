@@ -51,6 +51,7 @@ import android.os.RemoteException;
 import android.os.Trace;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
@@ -95,10 +96,7 @@ public class InCallController extends CallsManagerListenerBase implements
     public static final String NOTIFICATION_TAG = InCallController.class.getSimpleName();
     public static final int IN_CALL_SERVICE_NOTIFICATION_ID = 3;
 
-    private static final VibrationEffect CALL_CONNECT_EFFECT =
-            VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK);
-    private static final VibrationEffect CALL_DISCONNECT_EFFECT =
-            VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK);
+    private Vibrator mVibrator;
 
     public class InCallServiceConnection {
         /**
@@ -1054,8 +1052,6 @@ public class InCallController extends CallsManagerListenerBase implements
     private ArraySet<String> mAllCarrierPrivilegedApps = new ArraySet<>();
     private ArraySet<String> mActiveCarrierPrivilegedApps = new ArraySet<>();
 
-    private final Vibrator mVibrator;
-
     public InCallController(Context context, TelecomSystem.SyncRoot lock, CallsManager callsManager,
             SystemStateHelper systemStateHelper, DefaultDialerCache defaultDialerCache,
             Timeouts.Adapter timeoutsAdapter, EmergencyCallHelper emergencyCallHelper,
@@ -1063,7 +1059,6 @@ public class InCallController extends CallsManagerListenerBase implements
         mContext = context;
         mAppOpsManager = context.getSystemService(AppOpsManager.class);
         mSensorPrivacyManager = context.getSystemService(SensorPrivacyManager.class);
-        mVibrator = context.getSystemService(Vibrator.class);
         mLock = lock;
         mCallsManager = callsManager;
         mSystemStateHelper = systemStateHelper;
@@ -1315,24 +1310,16 @@ public class InCallController extends CallsManagerListenerBase implements
     @Override
     public void onCallStateChanged(Call call, int oldState, int newState) {
         maybeTrackMicrophoneUse(isMuted());
-        boolean vibrateOnConnect = Settings.System.getIntForUser(mContext.getContentResolver(),
+        boolean shouldVibrate = Settings.System.getIntForUser(mContext.getContentResolver(),
             Settings.System.VIBRATE_ON_CONNECT, 0, UserHandle.USER_CURRENT) == 1;
-        boolean vibrateOnDisconnect = Settings.System.getIntForUser(mContext.getContentResolver(),
-            Settings.System.VIBRATE_ON_DISCONNECT, 0, UserHandle.USER_CURRENT) == 1;
-
-        if (oldState == CallState.DIALING && newState == CallState.ACTIVE && vibrateOnConnect) {
-            vibrate(CALL_CONNECT_EFFECT);
+        if ((oldState == CallState.ANSWERED || oldState == CallState.DIALING) &&
+                newState == CallState.ACTIVE && shouldVibrate) {
+            performHapticFeedback(VibrationEffect.get(VibrationEffect.EFFECT_CLICK));
         } else if (oldState == CallState.ACTIVE && newState == CallState.DISCONNECTED
-                && vibrateOnDisconnect) {
-            vibrate(CALL_DISCONNECT_EFFECT);
+                && shouldVibrate) {
+            performHapticFeedback(VibrationEffect.get(VibrationEffect.EFFECT_DOUBLE_CLICK));
         }
         updateCall(call);
-    }
-
-    public void vibrate(VibrationEffect effect) {
-        if (mVibrator.hasVibrator()) {
-            mVibrator.vibrate(effect);
-        }
     }
 
     @Override
@@ -1602,6 +1589,9 @@ public class InCallController extends CallsManagerListenerBase implements
         }
 
         mInCallServiceConnection.chooseInitialInCallService(shouldUseCarModeUI());
+        if (mVibrator == null) {
+            mVibrator = (Vibrator) mContext.getSystemService(Context.VIBRATOR_SERVICE);
+        }
 
         // Actually try binding to the UI InCallService.
         if (mInCallServiceConnection.connect(call) ==
@@ -2414,5 +2404,12 @@ public class InCallController extends CallsManagerListenerBase implements
         boolean hasUi = type == IN_CALL_SERVICE_TYPE_CAR_MODE_UI
                 || type == IN_CALL_SERVICE_TYPE_DEFAULT_DIALER_UI;
         call.maybeOnInCallServiceTrackingChanged(isAdd, hasUi);
+    }
+
+    public void performHapticFeedback(VibrationEffect effect) {
+        if (mVibrator.hasVibrator() && mVibrator != null) {
+            mVibrator.vibrate(effect,
+                VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ACCESSIBILITY));
+        }
     }
 }
